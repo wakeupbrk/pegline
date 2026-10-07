@@ -116,8 +116,8 @@ so macOS asks again for access to the Desktop after each rebuild.
 | `FullScreen.swift` | Knows when to stay hidden |
 | `Line.swift` | What is hanging, and what you can do with it |
 
-Every image here, the icon included, is drawn in code by
-`scripts/make-icon.swift` and `scripts/make-readme-art.swift`.
+The app icon is `artwork/icon.png`.
+`scripts/make-readme-art.swift` draws the extra pictures.
 `scripts/make-dmg.sh` builds the disk image for releases.
 
 </details>
