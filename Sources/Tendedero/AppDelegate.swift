@@ -167,14 +167,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func offerInbox() {
         Inbox.wasOffered = true
         let alert = NSAlert()
-        alert.messageText = L("Let Tendedero handle your screenshots?",
-                              "¿Quieres que Tendedero se encargue de tus capturas?")
+        alert.messageText = L("Let Pegline handle your screenshots?",
+                              "¿Quieres que Pegline se encargue de tus capturas?")
         alert.informativeText = L(
-            "Screenshots will hang on the line the instant you take them, without the floating thumbnail, and will not pile up on your Desktop. Drag one to a folder to keep it, or discard it with the cross. You can turn this off from the menu bar, and your settings come back when Tendedero quits.",
-            "Las capturas se colgarán al instante, sin la miniatura flotante, y no se acumularán en el Escritorio. Arrastra una a una carpeta para guardarla, o descártala con la cruz. Puedes desactivarlo desde la barra de menús, y tus ajustes vuelven a ser los de antes al salir de Tendedero.")
+            "Screenshots will hang on the line the instant you take them, without the floating thumbnail, and will not pile up on your Desktop. Drag one to a folder to keep it, or discard it with the cross. You can turn this off from the menu bar, and your settings come back when Pegline quits.",
+            "Las capturas se colgarán al instante, sin la miniatura flotante, y no se acumularán en el Escritorio. Arrastra una a una carpeta para guardarla, o descártala con la cruz. Puedes desactivarlo desde la barra de menús, y tus ajustes vuelven a ser los de antes al salir de Pegline.")
         alert.addButton(withTitle: L("Turn on", "Activar"))
         alert.addButton(withTitle: L("Not now", "Ahora no"))
-        if let icon = NSImage(named: "Tendedero") ?? NSApp.applicationIconImage { alert.icon = icon }
+        if let icon = NSImage(named: "Pegline") ?? NSApp.applicationIconImage { alert.icon = icon }
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn { setInbox(true) }
     }
@@ -648,7 +648,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setUpStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let image = NSImage(systemSymbolName: "tshirt", accessibilityDescription: "Tendedero")
+        let image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Pegline")
         image?.isTemplate = true
         statusItem.button?.image = image
         let menu = NSMenu()
@@ -659,8 +659,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let toggleItem = ClosureMenuItem(isRevealed ? L("Hide line", "Ocultar tendedero")
-                                                 : L("Show line", "Mostrar tendedero")) { [weak self] in
+        let toggleItem = ClosureMenuItem(isRevealed ? L("Hide line", "Ocultar la línea")
+                                                 : L("Show line", "Mostrar la línea")) { [weak self] in
             self?.toggle()
         }
         toggleItem.keyEquivalent = "t"
@@ -702,12 +702,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(login)
 
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem(L("Quit Tendedero", "Salir de Tendedero"), key: "q") {
+        menu.addItem(ClosureMenuItem(L("Quit Pegline", "Salir de Pegline"), key: "q") {
             NSApp.terminate(nil)
         })
     }
 
-    /// `open -a Tendedero --args --enable-login` turns on the existing login
+    /// `open -a Pegline --args --enable-login` turns on the existing login
     /// switch without clicking the menu. The choice is remembered by macOS.
     private func enableLoginIfAsked() {
         guard CommandLine.arguments.contains("--enable-login") else { return }
@@ -728,7 +728,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             note = "error: \(error.localizedDescription)"
             log.error("Open at login failed: \(error.localizedDescription, privacy: .public)")
         }
-        try? note.write(to: URL(fileURLWithPath: "/tmp/tendedero-login-status.txt"), atomically: true, encoding: .utf8)
+        try? note.write(to: URL(fileURLWithPath: "/tmp/pegline-login-status.txt"), atomically: true, encoding: .utf8)
         if service.status == .requiresApproval {
             SMAppService.openSystemSettingsLoginItems()
         }
@@ -744,8 +744,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             let alert = NSAlert()
             alert.messageText = L("Could not change the login setting", "No se pudo cambiar el inicio de sesión")
-            alert.informativeText = L("Move Tendedero to the Applications folder and try again.",
-                                      "Mueve Tendedero a la carpeta Aplicaciones y vuelve a intentarlo.")
+            alert.informativeText = L("Move Pegline to the Applications folder and try again.",
+                                      "Mueve Pegline a la carpeta Aplicaciones y vuelve a intentarlo.")
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }

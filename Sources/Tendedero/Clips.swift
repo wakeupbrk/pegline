@@ -7,7 +7,7 @@ import AppKit
 enum Clips {
     static let folder: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Tendedero/Hanging", isDirectory: true)
+        return base.appendingPathComponent("Pegline/Hanging", isDirectory: true)
     }()
 
     /// A real file, with aliases and symlinks resolved. Folders are refused:

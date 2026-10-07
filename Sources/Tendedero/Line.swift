@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import os
 
-let log = Logger(subsystem: "app.tendedero.Tendedero", category: "line")
+let log = Logger(subsystem: "app.pegline.Pegline", category: "line")
 
 /// One screenshot, or a file you dragged on, hanging on the line.
 struct Pegged: Identifiable, Equatable {
@@ -162,7 +162,7 @@ final class Line: ObservableObject {
         contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/dock/drag to trash.aif",
         byReference: true)
 
-    /// Whether the file lives in Tendedero's screenshot folder. Those are discarded
+    /// Whether the file lives in Pegline's screenshot folder. Those are discarded
     /// to the Trash, or the folder would fill up with forgotten screenshots.
     /// Files anywhere else, like the Desktop, stay where they are.
     func isInInbox(_ id: UUID) -> Bool {
@@ -176,7 +176,7 @@ final class Line: ObservableObject {
         return item.url.standardizedFileURL.path.hasPrefix(Clips.folder.standardizedFileURL.path + "/")
     }
 
-    /// A file Tendedero owns: an inbox screenshot, or a copy dragged onto the line.
+    /// A file Pegline owns: an inbox screenshot, or a copy dragged onto the line.
     /// Discarding it deletes that file. The original of a dragged file is never touched.
     func ownsFile(_ id: UUID) -> Bool {
         isInInbox(id) || isClip(id)

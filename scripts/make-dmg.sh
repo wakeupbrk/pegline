@@ -1,18 +1,18 @@
 #!/bin/bash
-# Builds Tendedero.app and packs it into a disk image for releases.
+# Builds Pegline.app and packs it into a disk image for releases.
 # Usage: scripts/make-dmg.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 scripts/build-app.sh release
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' build/Tendedero.app/Contents/Info.plist)"
-DMG="build/Tendedero-$VERSION.dmg"
-NAME="Tendedero"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' build/Pegline.app/Contents/Info.plist)"
+DMG="build/Pegline-$VERSION.dmg"
+NAME="Pegline"
 
 WORK="$(mktemp -d)"
 STAGE="$WORK/stage"
 mkdir -p "$STAGE/.background"
-cp -R build/Tendedero.app "$STAGE/"
+cp -R build/Pegline.app "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 swift scripts/make-dmg-background.swift "$WORK/bg1x.png" 1
 swift scripts/make-dmg-background.swift "$WORK/bg2x.png" 2
@@ -45,7 +45,7 @@ tell application "Finder"
     set icon size of opts to 112
     set text size of opts to 13
     set background picture of opts to file ".background:background.tiff"
-    set position of item "Tendedero.app" of container window to {160, 178}
+    set position of item "Pegline.app" of container window to {160, 178}
     set position of item "Applications" of container window to {440, 178}
     -- Size last: Finder can resize the window while it applies the options.
     set the bounds of container window to {200, 120, 800, 528}
@@ -70,7 +70,7 @@ echo "Built $DMG"
 # Set TAP_DIR to the tap checkout; nothing is committed or pushed here, so the
 # cask never points at a release that is not on GitHub yet.
 TAP_DIR="${TAP_DIR:-$HOME/homebrew-tap}"
-CASK="$TAP_DIR/Casks/tendedero.rb"
+CASK="$TAP_DIR/Casks/pegline.rb"
 if [ -f "$CASK" ]; then
   SHA="$(shasum -a 256 "$DMG" | awk '{print $1}')"
   sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/; s/^  sha256 \".*\"/  sha256 \"$SHA\"/" "$CASK"
