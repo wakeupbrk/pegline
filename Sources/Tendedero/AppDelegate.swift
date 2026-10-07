@@ -8,6 +8,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let line = Line()
     private var panel: LinePanel!
+    private var dropCatcher: DropCatcher!
     private var statusItem: NSStatusItem!
     private var watcher: ScreenshotWatcher!
     /// In inbox mode, a second watcher on the Desktop. If a macOS version
@@ -43,11 +44,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastLiveCount = 0
     /// The screen a new capture was taken on: the line goes there.
     private var pendingScreen: NSScreen?
+    /// A Finder drag of files is in progress.
+    private var fileDragActive = false
+    /// The panel is reaching up over the menu bar to catch that drag.
+    private var dropPresented = false
+    /// Mouse-up and the drop handler both fire. Only the first one copies.
+    private var dropConsumed = false
+    /// changeCount of the drag pasteboard while nothing is being dragged.
+    private var dragBaseline = NSPasteboard(name: .drag).changeCount
+    private var dragWatch: Timer?
+    private var watchingMouse = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        enableLoginIfAsked()
         let host = NSHostingView(rootView: LineView(line: line))
         host.sizingOptions = []
-        panel = LinePanel(content: host)
+        host.autoresizingMask = []
+        dropCatcher = DropCatcher(host: host)
+        dropCatcher.onDrop = { [weak self] urls in
+            MainActor.assumeIsolated {
+                self?.acceptDrop(urls) ?? false
+            }
+        }
+        panel = LinePanel(content: dropCatcher)
         panel.placeOnScreen()
         updateCapacity()
 
@@ -61,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         setUpStatusItem()
         watchMenuBarClicks()
+        watchFileDrags()
 
         Markup.shared.onSaved = { [weak self] url in self?.line.reloadThumbnail(for: url) }
         line.onFall = { [weak self] item in self?.fall(item) }
@@ -431,6 +451,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// mouse while the cursor is over a photo. Everywhere else, clicks go to
     /// whatever is underneath.
     private func updateMousePassThrough(_ mouse: NSPoint) {
+        if dropPresented && isRevealed {
+            panel.ignoresMouseEvents = false
+            return
+        }
         guard !GrabView.isDragging else { return }
         let local = panel.convertPoint(fromScreen: mouse)
         let flipped = CGPoint(x: local.x, y: panel.frame.height - local.y)
@@ -443,6 +467,181 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateCapacity() {
         let usable = panel.frame.width - 200
         line.maxItems = max(3, min(12, Int(usable / Layout.spacing)))
+    }
+
+    // MARK: Dropping a file on the line
+
+    /// While the mouse is down anywhere, watch for a file drag that reaches
+    /// the menu bar. The line slides down and the drop makes a temporary copy.
+    private func watchFileDrags() {
+        let down: (NSEvent?) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.fileDragButtonDown() }
+        }
+        let up: (NSEvent?) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.fileDragButtonUp() }
+        }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: down) {
+            clickMonitors.append(monitor)
+        }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { event in
+            down(event)
+            return event
+        }) {
+            clickMonitors.append(monitor)
+        }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: up) {
+            clickMonitors.append(monitor)
+        }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp, handler: { event in
+            up(event)
+            return event
+        }) {
+            clickMonitors.append(monitor)
+        }
+    }
+
+    private func fileDragButtonDown() {
+        guard !watchingMouse else { return }
+        watchingMouse = true
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fileDragMoved() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        dragWatch = timer
+    }
+
+    private func fileDragMoved() {
+        if NSEvent.pressedMouseButtons & 1 == 0 {
+            fileDragButtonUp()
+            return
+        }
+        if GrabView.isDragging {
+            dragBaseline = NSPasteboard(name: .drag).changeCount
+            if fileDragActive {
+                fileDragActive = false
+                suspendDropTarget()
+            }
+            return
+        }
+        let pasteboard = NSPasteboard(name: .drag)
+        guard pasteboard.changeCount != dragBaseline, DropCatcher.hasFiles(pasteboard) else { return }
+        if !fileDragActive { dropConsumed = false }
+        fileDragActive = true
+        updateDropPresentation()
+    }
+
+    private func fileDragButtonUp() {
+        guard watchingMouse else { return }
+        watchingMouse = false
+        dragWatch?.invalidate()
+        dragWatch = nil
+
+        // A click, or a drag of one of our own cards: nothing to hang.
+        // The drop itself is taken by the panel. This only runs afterward,
+        // so a release on the menu bar still hangs if the panel missed it,
+        // and it cannot run twice.
+        guard fileDragActive || dropPresented else {
+            dragBaseline = NSPasteboard(name: .drag).changeCount
+            return
+        }
+        let inZone = screenForDrop(at: NSEvent.mouseLocation) != nil
+        let urls = DropCatcher.fileURLs(from: NSPasteboard(name: .drag))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if inZone { _ = self.acceptDrop(urls) }
+                self.finishFileDrag()
+            }
+        }
+    }
+
+    private func updateDropPresentation() {
+        guard fileDragActive, !GrabView.isDragging, let screen = screenForDrop(at: NSEvent.mouseLocation) else {
+            if dropPresented { suspendDropTarget() }
+            return
+        }
+        beginDropPresentation(on: screen)
+    }
+
+    /// Menu bar, a short reach below it, and the line itself once it is down.
+    private func screenForDrop(at mouse: NSPoint) -> NSScreen? {
+        if dropPresented, panel.frame.contains(mouse),
+           let screen = panel.screen, !FullScreen.isActive(on: screen) {
+            return screen
+        }
+        for screen in NSScreen.screens {
+            guard !FullScreen.isActive(on: screen) else { continue }
+            var zone = Self.menuBarBand(of: screen)
+            zone.origin.y -= 56
+            zone.size.height += 56
+            if zone.contains(mouse) { return screen }
+        }
+        return nil
+    }
+
+    private func beginDropPresentation(on screen: NSScreen) {
+        let sameScreen = panel.screen.map { $0.frame == screen.frame } ?? false
+        if dropPresented && sameScreen && isRevealed {
+            line.receivingDrop = true
+            dropCatcher.catching = true
+            panel.ignoresMouseEvents = false
+            return
+        }
+        line.receivingDrop = true
+        wanted = true
+        placeForDrop(on: screen)
+        updateCapacity()
+        dropPresented = true
+        dropCatcher.catching = true
+        panel.level = .popUpMenu
+        refresh()
+        reveal()
+        panel.ignoresMouseEvents = false
+        panel.orderFrontRegardless()
+    }
+
+    /// The window grows up over the menu bar. The line stays where it always
+    /// hangs; the extra strip only exists to catch the drop.
+    private func placeForDrop(on screen: NSScreen) {
+        let visible = screen.visibleFrame
+        let bottom = visible.maxY - Layout.panelHeight
+        let frame = NSRect(x: visible.minX, y: bottom, width: visible.width, height: screen.frame.maxY - bottom)
+        if panel.frame != frame { panel.setFrame(frame, display: true) }
+    }
+
+    private func suspendDropTarget() {
+        guard dropPresented else { return }
+        dropPresented = false
+        line.receivingDrop = false
+        dropCatcher.catching = false
+        panel.level = .floating
+        panel.ignoresMouseEvents = true
+        panel.placeOnScreen(panel.screen)
+    }
+
+    private func finishFileDrag() {
+        fileDragActive = false
+        let keep = dropConsumed || line.liveCount > 0 || line.pendingCopies > 0 || keepOpen
+        suspendDropTarget()
+        dragBaseline = NSPasteboard(name: .drag).changeCount
+        if !keep {
+            wanted = false
+            refresh()
+        }
+    }
+
+    /// Copies every regular file and hangs it. Folders are refused.
+    private func acceptDrop(_ urls: [URL]) -> Bool {
+        guard !dropConsumed else { return true }
+        guard !urls.isEmpty else { return false }
+        let files = urls.compactMap { Clips.regularFile(at: $0) }
+        guard !files.isEmpty else {
+            NSSound.beep()
+            return false
+        }
+        dropConsumed = true
+        line.hangCopies(of: files)
+        return true
     }
 
     // MARK: Menu bar
@@ -506,6 +705,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(ClosureMenuItem(L("Quit Tendedero", "Salir de Tendedero"), key: "q") {
             NSApp.terminate(nil)
         })
+    }
+
+    /// `open -a Tendedero --args --enable-login` turns on the existing login
+    /// switch without clicking the menu. The choice is remembered by macOS.
+    private func enableLoginIfAsked() {
+        guard CommandLine.arguments.contains("--enable-login") else { return }
+        let service = SMAppService.mainApp
+        var note = ""
+        do {
+            if service.status != .enabled {
+                try service.register()
+            }
+            switch service.status {
+            case .enabled: note = "enabled"
+            case .requiresApproval: note = "requiresApproval"
+            case .notRegistered: note = "notRegistered"
+            case .notFound: note = "notFound"
+            @unknown default: note = "unknown"
+            }
+        } catch {
+            note = "error: \(error.localizedDescription)"
+            log.error("Open at login failed: \(error.localizedDescription, privacy: .public)")
+        }
+        try? note.write(to: URL(fileURLWithPath: "/tmp/tendedero-login-status.txt"), atomically: true, encoding: .utf8)
+        if service.status == .requiresApproval {
+            SMAppService.openSystemSettingsLoginItems()
+        }
     }
 
     private static func toggleLaunchAtLogin() {

@@ -29,12 +29,20 @@ struct LineView: View {
         GeometryReader { geo in
             let width = geo.size.width
             ZStack(alignment: .topLeading) {
-                Rope(width: width)
+                Rope(width: width, lit: line.receivingDrop)
 
                 if line.items.isEmpty {
-                    Hint()
+                    Hint(text: line.receivingDrop
+                         ? L("Drop to hang a copy", "Suelta para colgar una copia")
+                         : L("Take a screenshot, or drop a file here",
+                             "Haz una captura, o suelta un archivo aquí"))
                         .position(x: width / 2, y: Layout.ropeY(x: width / 2, width: width) + 34)
                         .transition(.opacity)
+                } else if line.receivingDrop {
+                    Hint(text: L("Drop to hang a copy", "Suelta para colgar una copia"))
+                        .position(x: width / 2, y: geo.size.height - 28)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
                 }
 
                 ForEach(Array(line.items.enumerated()), id: \.element.id) { index, item in
@@ -47,6 +55,7 @@ struct LineView: View {
             }
             .animation(.spring(response: 0.55, dampingFraction: 0.78), value: line.items.map(\.id))
             .animation(.easeInOut(duration: 0.3), value: line.items.isEmpty)
+            .animation(.easeInOut(duration: 0.2), value: line.receivingDrop)
             // Tucked away, the whole line waits above the top edge and slides
             // out from under the menu bar, the way an auto-hiding Dock does.
             .offset(y: line.revealed ? 0 : -(Layout.panelHeight + 12))
@@ -60,10 +69,13 @@ struct LineView: View {
 }
 
 private struct Hint: View {
+    let text: String
+
     var body: some View {
-        Text(L("Take a screenshot and it will hang here", "Haz una captura y se quedará colgada aquí"))
+        Text(text)
             .font(.system(size: 12, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
+            .lineLimit(1)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(.regularMaterial, in: Capsule())
@@ -75,6 +87,7 @@ private struct Hint: View {
 /// both ends so it seems to come from beyond the screen.
 struct Rope: View {
     let width: CGFloat
+    var lit = false
 
     private var path: Path {
         Path { p in
@@ -90,7 +103,7 @@ struct Rope: View {
         ZStack {
             path.stroke(Color.black.opacity(0.22), lineWidth: 1.4).offset(y: 1.2).blur(radius: 1.2)
             path.stroke(Color(white: 0.55), lineWidth: 1.2)
-            path.stroke(Color.white.opacity(0.45), lineWidth: 0.4).offset(y: -0.35)
+            path.stroke(Color.white.opacity(lit ? 0.95 : 0.45), lineWidth: lit ? 0.7 : 0.4).offset(y: -0.35)
         }
         .mask(
             LinearGradient(stops: [

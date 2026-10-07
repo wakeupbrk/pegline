@@ -47,12 +47,12 @@ struct GrabArea: NSViewRepresentable {
             menu.addItem(ClosureMenuItem(L("Open", "Abrir")) { line.open(id) })
             menu.addItem(ClosureMenuItem(L("Markup", "Marcación")) { line.markup(id) })
             menu.addItem(ClosureMenuItem(L("Show in Finder", "Mostrar en Finder")) { line.reveal(id) })
-            let inInbox = line.isInInbox(id)
-            if inInbox {
+            let owned = line.ownsFile(id)
+            if owned {
                 menu.addItem(ClosureMenuItem(L("Save to Desktop", "Guardar en el Escritorio")) { line.saveToDesktop(id) })
             }
             menu.addItem(.separator())
-            if inInbox {
+            if owned {
                 menu.addItem(ClosureMenuItem(L("Discard", "Descartar")) { line.discard(id) })
             } else {
                 menu.addItem(ClosureMenuItem(L("Take down", "Descolgar")) { line.discard(id) })

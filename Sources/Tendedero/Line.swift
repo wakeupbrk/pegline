@@ -4,7 +4,7 @@ import os
 
 let log = Logger(subsystem: "app.tendedero.Tendedero", category: "line")
 
-/// One screenshot hanging on the line.
+/// One screenshot, or a file you dragged on, hanging on the line.
 struct Pegged: Identifiable, Equatable {
     let id = UUID()
     let url: URL
@@ -21,7 +21,8 @@ struct Pegged: Identifiable, Equatable {
 }
 
 /// The line itself: what hangs on it and what you can do with each item.
-/// The files never move. The line is only a view onto them.
+/// A screenshot stays where macOS saved it. A file dragged onto the line
+/// is copied first, and that copy is what hangs.
 @MainActor
 final class Line: ObservableObject {
     @Published private(set) var items: [Pegged] = []
@@ -31,6 +32,8 @@ final class Line: ObservableObject {
     @Published var pressedID: UUID?
     /// Whether the line has slid down into view.
     @Published var revealed = false
+    /// A file drag is hovering the line, waiting to be dropped.
+    @Published var receivingDrop = false
 
     /// Card frames in window coordinates, reported by the views. The panel
     /// uses them to only catch clicks over photos and let the rest through.
@@ -45,6 +48,9 @@ final class Line: ObservableObject {
     }
 
     var liveCount: Int { items.filter { !$0.falling }.count }
+
+    /// Copies still being made for a drop of something large.
+    private(set) var pendingCopies = 0
 
     private let storeKey = "pegged"
 
@@ -63,7 +69,9 @@ final class Line: ObservableObject {
         item.flying = flying
         items.append(item)
         // A full line lets the oldest photo fall off the far end.
+        // A dragged-on copy has no other home, so falling off deletes it.
         while liveCount > maxItems, let oldest = items.first(where: { !$0.falling }) {
+            if isClip(oldest.id) { try? FileManager.default.removeItem(at: oldest.url) }
             drop(oldest.id, quietly: true)
         }
         save()
@@ -94,6 +102,9 @@ final class Line: ObservableObject {
     }
 
     func clear() {
+        for item in items where !item.falling && isClip(item.id) {
+            try? FileManager.default.removeItem(at: item.url)
+        }
         let live = items.filter { !$0.falling }
         for (n, item) in live.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06 * Double(n)) { [weak self] in
@@ -151,7 +162,7 @@ final class Line: ObservableObject {
         contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/dock/drag to trash.aif",
         byReference: true)
 
-    /// Whether the file lives in Tendedero's own folder. Those are discarded
+    /// Whether the file lives in Tendedero's screenshot folder. Those are discarded
     /// to the Trash, or the folder would fill up with forgotten screenshots.
     /// Files anywhere else, like the Desktop, stay where they are.
     func isInInbox(_ id: UUID) -> Bool {
@@ -159,9 +170,63 @@ final class Line: ObservableObject {
         return item.url.standardizedFileURL.path.hasPrefix(Inbox.folder.standardizedFileURL.path + "/")
     }
 
+    /// A temporary copy made when a file was dragged onto the line.
+    private func isClip(_ id: UUID) -> Bool {
+        guard let item = items.first(where: { $0.id == id }) else { return false }
+        return item.url.standardizedFileURL.path.hasPrefix(Clips.folder.standardizedFileURL.path + "/")
+    }
+
+    /// A file Tendedero owns: an inbox screenshot, or a copy dragged onto the line.
+    /// Discarding it deletes that file. The original of a dragged file is never touched.
+    func ownsFile(_ id: UUID) -> Bool {
+        isInInbox(id) || isClip(id)
+    }
+
     /// The corner cross and "Take down" both end up here.
     func discard(_ id: UUID) {
-        if isInInbox(id) { trash(id) } else { drop(id) }
+        if ownsFile(id) { trash(id) } else { drop(id) }
+    }
+
+    /// Hang temporary copies of files dragged onto the line.
+    /// Small files copy immediately. A large one copies in the background,
+    /// then hangs when it is ready.
+    func hangCopies(of files: [URL]) {
+        guard !files.isEmpty else { return }
+        let modestLimit = 64 * 1024 * 1024
+        if files.allSatisfy({ Clips.byteSize($0) <= modestLimit }) {
+            hangCopied(Clips.copies(of: files))
+            return
+        }
+        pendingCopies += files.count
+        let count = files.count
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let made = Clips.copies(of: files)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.pendingCopies = max(0, self.pendingCopies - count)
+                    self.hangCopied(made)
+                }
+            }
+        }
+    }
+
+    /// `copies` already live in the hanging folder.
+    private func hangCopied(_ copies: [URL]) {
+        guard !copies.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        var hung = false
+        for (index, copy) in copies.enumerated() {
+            let last = index == copies.count - 1
+            if hang(copy, quietly: !last) != nil {
+                hung = true
+            } else {
+                try? FileManager.default.removeItem(at: copy)
+            }
+        }
+        if !hung { NSSound.beep() }
     }
 
     /// Inbox mode: keep a screenshot by moving it to the Desktop.
@@ -251,6 +316,11 @@ final class Line: ObservableObject {
 }
 
 func makeThumbnail(_ url: URL, maxPixels: Int = 480) -> NSImage? {
+    if let image = imageThumbnail(url, maxPixels: maxPixels) { return image }
+    return Clips.iconCard(for: url)
+}
+
+private func imageThumbnail(_ url: URL, maxPixels: Int) -> NSImage? {
     guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
     let options: [CFString: Any] = [
         kCGImageSourceCreateThumbnailFromImageAlways: true,
